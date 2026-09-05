@@ -48,3 +48,36 @@ The test suite covers safetensors metadata and range reads, chunk/cache behavior
 ## Limitations and roadmap
 
 This version does not yet implement disk-backed activation spilling, transformer attention/KV-cache tiling, full reference-model loading, CUDA/VRAM management, quantization, mmap accounting, or overlapped compute/I/O. If an operator has an unavoidable working set larger than the budget and no supported tiling strategy, it must fail rather than silently exceed the budget. Future work adds architecture-specific adapters (Llama, Mistral, Qwen, Gemma, Phi, GPT-2, T5, BERT), stronger activation accounting, safe prefetch data reservation, and GPU devices.
+
+## Local offline server
+
+After creating a prepared model directory, start the local OpenAI-compatible server:
+
+```bash
+python -m stream_runtime serve \
+  --model ./prepared_model \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --ram-budget 512M \
+  --api-key local
+```
+
+The server makes no model downloads, cloud API calls, telemetry calls, or runtime network requests. It binds to `127.0.0.1` by default. Use `--no-auth` only for trusted localhost development; use `--host 0.0.0.0` only when deliberately exposing the service to a LAN.
+
+Endpoints:
+
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/v1/models
+curl http://127.0.0.1:8000/v1/status
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' -H 'Authorization: Bearer local' \
+  -d '{"model":"prepared_model","messages":[{"role":"user","content":"Hello"}],"stream":false}'
+curl -N http://127.0.0.1:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' -H 'Authorization: Bearer local' \
+  -d '{"model":"prepared_model","messages":[{"role":"user","content":"Explain Python generators."}],"stream":true}'
+```
+
+`examples/client.py` performs model discovery, a normal chat request, and an SSE request. The included serving adapter is intentionally a local deterministic demo for the supported test architecture; it does not claim to be a general natural-language tokenizer or transformer implementation. A future architecture adapter can replace the local prompt encoder and connect a real tokenizer loaded only from local files.
+
+The server uses a single active generation protected by an async request queue. Blocking inference runs in a worker thread so the HTTP event loop remains responsive. `/v1/status` reports managed-memory peak/current usage, disk bytes read, node executions, active request, and queue length. Process RSS is not represented as managed memory.

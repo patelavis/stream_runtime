@@ -7,4 +7,6 @@ License-File: LICENSE
 Requires-Dist: torch>=2.0
 Requires-Dist: numpy>=1.23
 Requires-Dist: safetensors>=0.3
+Requires-Dist: fastapi>=0.100
+Requires-Dist: uvicorn>=0.22
 Dynamic: license-file

@@ -7,7 +7,7 @@ name = "stream-runtime"
 version = "0.1.0"
 description = "CPU-first disk-streaming, memory-budgeted inference prototype"
 requires-python = ">=3.9"
-dependencies = ["torch>=2.0", "numpy>=1.23", "safetensors>=0.3"]
+dependencies = ["torch>=2.0", "numpy>=1.23", "safetensors>=0.3", "fastapi>=0.100", "uvicorn>=0.22"]
 
 [project.scripts]
 stream-runtime = "stream_runtime.cli:main"

@@ -52,6 +52,17 @@ def test_cmd(args):
         model=os.path.join(d,'model.safetensors'); prepared=os.path.join(d,'prepared')
         subprocess.check_call([sys.executable,'examples/create_test_model.py','--output',model])
         prepare(argparse.Namespace(model=model,output=prepared)); plan(argparse.Namespace(prepared=prepared,ram_budget='1M')); run(argparse.Namespace(prepared=prepared,ram_budget='1M',input=None,output=None,trace=False))
+def serve_cmd(args):
+    from .server import run_server
+    model=args.model or args.model_pos
+    if not model: raise SystemExit('serve requires --model MODEL or a model directory')
+    run_server(model,host=args.host,port=args.port,ram_budget=parse_bytes(args.ram_budget),api_key=args.api_key,no_auth=args.no_auth,request_timeout=args.request_timeout,cache_size=parse_bytes(args.cache_size) if args.cache_size else 0)
+def models_cmd(args):
+    import urllib.request
+    print(urllib.request.urlopen(args.url.rstrip('/')+'/v1/models',timeout=5).read().decode())
+def status_cmd(args):
+    import urllib.request
+    print(urllib.request.urlopen(args.url.rstrip('/')+'/v1/status',timeout=5).read().decode())
 def main():
     p=argparse.ArgumentParser(prog='stream-runtime'); sub=p.add_subparsers(dest='cmd',required=True)
     a=sub.add_parser('prepare'); a.add_argument('model'); a.add_argument('--output',required=True); a.set_defaults(func=prepare)
@@ -59,5 +70,8 @@ def main():
     a=sub.add_parser('plan'); a.add_argument('prepared'); a.add_argument('--ram-budget',required=True); a.set_defaults(func=plan)
     a=sub.add_parser('run'); a.add_argument('prepared'); a.add_argument('--ram-budget',required=True); a.add_argument('--input'); a.add_argument('--output'); a.add_argument('--trace',action='store_true'); a.set_defaults(func=run)
     a=sub.add_parser('test'); a.set_defaults(func=test_cmd)
+    a=sub.add_parser('serve'); a.add_argument('model_pos',nargs='?'); a.add_argument('--model'); a.add_argument('--host',default='127.0.0.1'); a.add_argument('--port',type=int,default=8000); a.add_argument('--ram-budget',required=True); a.add_argument('--cache-size'); a.add_argument('--api-key',default='local'); a.add_argument('--no-auth',action='store_true'); a.add_argument('--request-timeout',type=float); a.set_defaults(func=serve_cmd)
+    a=sub.add_parser('models'); a.add_argument('--url',default='http://127.0.0.1:8000'); a.set_defaults(func=models_cmd)
+    a=sub.add_parser('status'); a.add_argument('--url',default='http://127.0.0.1:8000'); a.set_defaults(func=status_cmd)
     args=p.parse_args(); args.func(args)
 if __name__=='__main__': main()
