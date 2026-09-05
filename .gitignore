@@ -224,3 +224,4 @@ __marimo__/
 *.safetensors
 prepared_model/
 stream_runtime.zip
+.DS_Store
