@@ -1,0 +1,4 @@
+torch>=2.0
+numpy>=1.23
+safetensors>=0.3
+pytest>=7

@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: stream-runtime
+Version: 0.1.0
+Summary: CPU-first disk-streaming, memory-budgeted inference prototype
+Requires-Python: >=3.9
+License-File: LICENSE
+Requires-Dist: torch>=2.0
+Requires-Dist: numpy>=1.23
+Requires-Dist: safetensors>=0.3
+Dynamic: license-file

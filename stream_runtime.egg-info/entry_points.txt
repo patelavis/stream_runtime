@@ -1,0 +1,2 @@
+[console_scripts]
+stream-runtime = stream_runtime.cli:main
