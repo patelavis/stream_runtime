@@ -16,12 +16,13 @@ class SafeTensorStream:
             start, end = item['data_offsets']
             if start < 0 or end < start or self.data_offset + end > self.file_size: raise ValueError(f'invalid offsets for {name}')
             self._tensors[name] = TensorMetadata(name, item['dtype'], tuple(item['shape']), self.data_offset+start, self.data_offset+end)
-        self.bytes_read = 0; self.reads = 0
+        self.bytes_read = 0; self.reads = 0; self.read_log = []
     def tensor_names(self): return list(self._tensors)
-    def metadata(self, name): return self._tensors[name]
+    def metadata(self, name=None): return self._tensors if name is None else self._tensors[name]
     def get_tensor(self, name): return StreamedTensor(self, self.metadata(name))
+    def tensor(self, name): return self.get_tensor(name)
     def read_bytes(self, offset, length):
         with open(self.path, 'rb') as f:
             f.seek(offset); data = f.read(length)
         if len(data) != length: raise IOError('short read')
-        self.bytes_read += length; self.reads += 1; return data
+        self.bytes_read += length; self.reads += 1; self.read_log.append({'offset': offset, 'length': length}); return data

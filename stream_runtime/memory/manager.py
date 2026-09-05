@@ -8,6 +8,9 @@ class MemoryManager:
     def __init__(self,budget_bytes): self.budget_bytes=budget_bytes; self.stats=MemoryStats()
     @property
     def available(self): return self.budget_bytes-self.stats.current
+    def used(self): return self.stats.current
+    def available_bytes(self): return self.available
+    def peak(self): return self.stats.peak
     def reserve(self,nbytes,category='temporary'):
         if nbytes < 0 or nbytes > self.available: raise MemoryBudgetExceeded(nbytes,max(0,self.available),self.budget_bytes,category)
         self.stats.current += nbytes; self.stats.peak=max(self.stats.peak,self.stats.current)

@@ -15,6 +15,12 @@ class TensorMetadata:
     @property
     def nbytes(self): return self.data_end - self.data_start
     @property
+    def offset(self): return self.data_start
+    @property
+    def file_offset(self): return self.data_start
+    @property
+    def file_length(self): return self.nbytes
+    @property
     def np_dtype(self):
         if self.dtype not in _DTYPE: raise ValueError(f"Unsupported safetensors dtype: {self.dtype}")
         return _DTYPE[self.dtype]
@@ -25,6 +31,17 @@ class StreamedTensor:
     def name(self): return self.metadata.name
     @property
     def nbytes(self): return self.metadata.nbytes
+    @property
+    def shape(self): return self.metadata.shape
+    @property
+    def dtype(self): return self.metadata.dtype
+    @property
+    def offset(self): return self.metadata.file_offset
+    @property
+    def file_offset(self): return self.metadata.file_offset
+    @property
+    def file_length(self): return self.metadata.file_length
+    def read(self, offset=0, length=None): return self.read_chunk(offset, length)
     def read_chunk(self, offset=0, size=None):
         size = self.nbytes - offset if size is None else size
         if offset < 0 or size < 0 or offset + size > self.nbytes: raise ValueError("chunk outside tensor")

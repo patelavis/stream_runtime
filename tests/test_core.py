@@ -1,4 +1,4 @@
-import os, torch, pytest
+import os, asyncio, torch, pytest
 from safetensors.torch import save_file
 from stream_runtime.memory import MemoryManager
 from stream_runtime.exceptions import MemoryBudgetExceeded
@@ -19,7 +19,14 @@ def test_cache_bound():
  c=TensorChunkCache(10); c.put('a',b'123456'); c.put('b',b'123456'); assert c.bytes<=10
 
 def test_stream_ranges(tmp_path):
- p,state=model(tmp_path); r=SafeTensorStream(p); t=r.get_tensor('linear1.weight'); assert t.metadata.shape==(8,4); assert len(t.read_chunk(0,16))==16; assert r.bytes_read==16
+    p,state=model(tmp_path); r=SafeTensorStream(p); t=r.get_tensor('linear1.weight'); assert t.metadata.shape==(8,4); assert len(t.read_chunk(0,16))==16; assert r.bytes_read==16
+    assert t.shape==(8,4) and t.file_offset == t.offset and t.file_length == t.nbytes
+
+def test_async_range_read(tmp_path):
+    from stream_runtime.storage import AsyncTensorStore
+    p,state=model(tmp_path); a=AsyncTensorStore(TensorStore(p))
+    data=asyncio.run(a.read('linear1.weight',0,16)); a.close()
+    assert len(data)==16
 
 def test_tiled_end_to_end(tmp_path):
  p,state=model(tmp_path); r=SafeTensorStream(p); nodes,tensors=__import__('stream_runtime.architecture.generic',fromlist=['ArchitectureAdapter']).ArchitectureAdapter().analyze(r); g=ModelGraph('generic','generic',nodes,tensors); mm=MemoryManager(256); store=TensorStore(p); y=StreamingEngine(g,store,mm,MemoryPlanner(256).plan(g)).run(torch.ones(1,4)); ref=torch.relu(torch.ones(1,4)@state['linear1.weight'].T)@state['linear2.weight'].T; assert torch.allclose(y,ref); assert store.bytes_read < os.path.getsize(p)
