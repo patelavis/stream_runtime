@@ -1,103 +1,46 @@
-from dataclasses import dataclass
+import torch
 import numpy as np
+from typing import Tuple, Optional
+from dataclasses import dataclass
+from .exceptions import TensorReadError
 
-_DTYPE = {
-    "F16": np.float16,
-    "F32": np.float32,
-    "F64": np.float64,
-    "BF16": np.uint16,
-    "I8": np.int8,
-    "I16": np.int16,
-    "I32": np.int32,
-    "I64": np.int64,
-    "U8": np.uint8,
-    "U16": np.uint16,
-    "U32": np.uint32,
-    "U64": np.uint64,
-    "BOOL": np.bool_,
-}
-
-
-@dataclass(frozen=True)
-class TensorMetadata:
+@dataclass
+class TensorDescriptor:
+    """Metadata for a tensor stored on disk."""
     name: str
-    dtype: str
-    shape: tuple
-    data_start: int
-    data_end: int
+    shape: Tuple[int, ...]
+    dtype: torch.dtype
+    nbytes: int
+    file_offset: int
+    file_length: int
 
-    @property
-    def nbytes(self):
-        return self.data_end - self.data_start
+class StreamTensor:
+    """A handle to a tensor stored on disk, supporting range-based reads."""
+    def __init__(self, descriptor: TensorDescriptor, file_handle):
+        self.descriptor = descriptor
+        self._fh = file_handle # Should be an object that supports pread
 
-    @property
-    def offset(self):
-        return self.data_start
+    def read(self) -> torch.Tensor:
+        """Reads the entire tensor into memory."""
+        try:
+            # Using a hypothetical .pread helper since os.pread needs a fd
+            data = self._fh.pread(self.descriptor.file_offset, self.descriptor.file_length)
+            return torch.from_numpy(np.frombuffer(data, dtype=self.descriptor.dtype).reshape(self.descriptor.shape))
+        except Exception as e:
+            raise TensorReadError(f"Failed to read tensor {self.descriptor.name}: {e}")
 
-    @property
-    def file_offset(self):
-        return self.data_start
+    def read_chunk(self, offset: int, size: int) -> torch.Tensor:
+        """Reads a specific chunk of the tensor into memory."""
+        abs_offset = self.descriptor.file_offset + offset
+        try:
+            data = self._fh.pread(abs_offset, size)
+            # Note: In a real implementation, we'd need to handle which dimensions
+            # this chunk corresponds to for correct reshaping.
+            return torch.from_numpy(np.frombuffer(data, dtype=self.descriptor.dtype))
+        except Exception as e:
+            raise TensorReadError(f"Failed to read chunk at offset {offset} of {self.descriptor.name}: {e}")
 
-    @property
-    def file_length(self):
-        return self.nbytes
-
-    @property
-    def np_dtype(self):
-        if self.dtype not in _DTYPE:
-            raise ValueError(f"Unsupported safetensors dtype: {self.dtype}")
-        return _DTYPE[self.dtype]
-
-
-class StreamedTensor:
-    def __init__(self, reader, metadata):
-        self.reader, self.metadata = reader, metadata
-
-    @property
-    def name(self):
-        return self.metadata.name
-
-    @property
-    def nbytes(self):
-        return self.metadata.nbytes
-
-    @property
-    def shape(self):
-        return self.metadata.shape
-
-    @property
-    def dtype(self):
-        return self.metadata.dtype
-
-    @property
-    def offset(self):
-        return self.metadata.file_offset
-
-    @property
-    def file_offset(self):
-        return self.metadata.file_offset
-
-    @property
-    def file_length(self):
-        return self.metadata.file_length
-
-    def read(self, offset=0, length=None):
-        return self.read_chunk(offset, length)
-
-    def read_chunk(self, offset=0, size=None):
-        size = self.nbytes - offset if size is None else size
-        if offset < 0 or size < 0 or offset + size > self.nbytes:
-            raise ValueError("chunk outside tensor")
-        return self.reader.read_bytes(self.metadata.data_start + offset, size)
-
-    def iter_chunks(self, chunk_size):
-        for offset in range(0, self.nbytes, chunk_size):
-            yield self.read_chunk(offset, min(chunk_size, self.nbytes - offset))
-
-    def to_numpy(self):
-        raw = self.read_chunk()
-        return (
-            np.frombuffer(raw, dtype=self.metadata.np_dtype)
-            .reshape(self.metadata.shape)
-            .copy()
-        )
+    def iter_chunks(self, chunk_size: int):
+        """Yields chunks of the tensor."""
+        # Placeholder for tiling-aware logic
+        pass

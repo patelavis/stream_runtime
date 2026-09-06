@@ -1,5 +1,0 @@
-torch>=2.0
-numpy>=1.23
-safetensors>=0.3
-fastapi>=0.100
-uvicorn>=0.22

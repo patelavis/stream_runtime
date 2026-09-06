@@ -1,60 +1,86 @@
-import json, os, struct
-from .tensor import TensorMetadata, StreamedTensor
-
+import os
+import struct
+import json
+import torch
+from typing import Dict, List, Optional
+from .exceptions import TensorReadError
+from .tensor import TensorDescriptor, StreamTensor
 
 class SafeTensorStream:
-    def __init__(self, path):
-        self.path = os.fspath(path)
-        self.file_size = os.path.getsize(self.path)
-        with open(self.path, "rb") as f:
-            b = f.read(8)
-            if len(b) != 8:
-                raise ValueError("truncated safetensors header")
-            self.header_size = struct.unpack("<Q", b)[0]
-            if (
-                self.header_size > self.file_size - 8
-                or self.header_size > 128 * 1024 * 1024
-            ):
-                raise ValueError("invalid header size")
-            header = json.loads(f.read(self.header_size))
-        self.data_offset = 8 + self.header_size
-        self._tensors = {}
-        for name, item in header.items():
-            if name == "__metadata__":
-                continue
-            start, end = item["data_offsets"]
-            if start < 0 or end < start or self.data_offset + end > self.file_size:
-                raise ValueError(f"invalid offsets for {name}")
-            self._tensors[name] = TensorMetadata(
-                name,
-                item["dtype"],
-                tuple(item["shape"]),
-                self.data_offset + start,
-                self.data_offset + end,
-            )
-        self.bytes_read = 0
-        self.reads = 0
-        self.read_log = []
+    """
+    A streaming reader for .safetensors files.
+    Reads only the header and provides range-based access to tensors.
+    """
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Model file not found: {file_path}")
 
-    def tensor_names(self):
-        return list(self._tensors)
+        # Open the file for reading using a raw file descriptor to support pread
+        self._fd = os.open(file_path, os.O_RDONLY)
+        self._tensors: Dict[str, TensorDescriptor] = {}
+        self._metadata: Optional[dict] = None
+        self._parse_header()
 
-    def metadata(self, name=None):
-        return self._tensors if name is None else self._tensors[name]
+    def _parse_header(self):
+        """Parses the .safetensors header."""
+        try:
+            # The header starts with 8 bytes for the length of the JSON string,
+            # followed by the JSON itself.
+            header_len_bytes = os.pread(self._fd, 8)
+            if not header_len_bytes:
+                raise TensorReadError("Empty file or missing header length.")
 
-    def get_tensor(self, name):
-        return StreamedTensor(self, self.metadata(name))
+            header_len = struct.unpack("<Q", header_len_bytes)[0]
+            header_json = os.pread(self._fd, header_len).decode('utf-8')
+            self._metadata = json.loads(header_json)
 
-    def tensor(self, name):
-        return self.get_tensor(name)
+            # Extract tensor metadata
+            for name, info in self._metadata['data'].items():
+                dtype_str = info['dtype']
+                shape = tuple(info['shape'])
+                offset = info['data_offset']
+                length = info['data_len']
 
-    def read_bytes(self, offset, length):
-        with open(self.path, "rb") as f:
-            f.seek(offset)
-            data = f.read(length)
-        if len(data) != length:
-            raise IOError("short read")
-        self.bytes_read += length
-        self.reads += 1
-        self.read_log.append({"offset": offset, "length": length})
-        return data
+                # Map safetensors dtype strings to torch dtypes
+                dtype_map = {
+                    "F32": torch.float32,
+                    "F16": torch.float16,
+                    "BF16": torch.bfloat16,
+                    "I64": torch.int64,
+                    "U8": torch.uint8,
+                }
+                dtype = dtype_map.get(dtype_str, torch.float32)
+
+                self._tensors[name] = TensorDescriptor(
+                    name=name,
+                    shape=shape,
+                    dtype=dtype,
+                    nbytes=length,
+                    file_offset=offset,
+                    file_length=length
+                )
+        except Exception as e:
+            raise TensorReadError(f"Failed to parse safetensors header: {e}")
+
+    def tensor_names(self) -> List[str]:
+        """Returns a list of all tensor names in the file."""
+        return list(self._tensors.keys())
+
+    def get_tensor(self, name: str) -> StreamTensor:
+        """Returns a handle to a specific tensor descriptor."""
+        if name not in self._tensors:
+            raise KeyError(f"Tensor '{name}' not found in model.")
+        return StreamTensor(self._tensors[name], self)
+
+    def metadata(self) -> dict:
+        """Returns the raw JSON metadata from the header."""
+        return self._metadata if self._metadata else {}
+
+    def pread(self, offset: int, size: int) -> bytes:
+        """Wrapper around os.pread for reading specific ranges."""
+        return os.pread(self._fd, size, offset)
+
+    def __del__(self):
+        if hasattr(self, '_fd') and self._fd is not None:
+            os.close(self._fd)

@@ -1,76 +1,103 @@
-from dataclasses import dataclass
-from contextlib import contextmanager
-from ..exceptions import MemoryBudgetExceeded
+import torch
+from typing import Optional, List
+from .exceptions import MemoryBudgetExceeded
 
+@dataclass
+class NodePlan:
+    node_id: int
+    name: str
+    strategy: Strategy
+    working_set_bytes: int
+
+@dataclass
+class Strategy:
+    type: str  # "direct" or "tiled"
+    tile_size: Optional[int] = None
+    estimated_memory: int = 0
+
+class MemoryManager:
+    """Manages the user-defined RAM budget for model and runtime operations."""
+    def __init__(self, budget_bytes: int):
+        self.budget = budget_bytes
+        self.stats = MemoryStats()
+        self.peak_usage = 0
+
+    def available(self) -> int:
+        return self.budget - self.stats.total
+
+    def request(self, size: int, category: str) -> bool:
+        """Check if an allocation can fit within the budget."""
+        if self.stats.total + size > self.budget:
+            return False
+
+        if category == 'weights':
+            self.stats.weights_bytes += size
+        elif category == 'activations':
+            self.stats.activations_bytes += size
+        elif category == 'temporary':
+            self.stats.temporary_bytes += size
+        elif category == 'cache':
+            self.stats.cache_bytes += size
+        elif category == 'prefetch':
+            self.stats.prefetch_bytes += size
+        else:
+            raise ValueError(f"Unknown memory category: {category}")
+
+        self.peak_usage = max(self.peak_usage, self.stats.total)
+        return True
+
+    def release(self, size: int, category: str):
+        """Release a previously requested allocation."""
+        if category == 'weights':
+            self.stats.weights_bytes = max(0, self.stats.weights_bytes - size)
+        elif category == 'activations':
+            self.stats.activations_bytes = max(0, self.stats.activations_bytes - size)
+        elif category == 'temporary':
+            self.stats.temporary_bytes = max(0, self.stats.temporary_bytes - size)
+        elif category == 'cache':
+            self.stats.cache_bytes = max(0, self.stats.cache_bytes - size)
+        elif category == 'prefetch':
+            self.stats.prefetch_bytes = max(0, self.stats.prefetch_bytes - size)
+
+    def report(self) -> dict:
+        """Returns the current memory usage statistics."""
+        return {
+            "budget": self.budget,
+            "current": self.stats.total,
+            "peak": self.peak_usage,
+            "available": self.available(),
+            "weights": self.stats.weights_bytes,
+            "activations": self.stats.activations_bytes,
+            "temporary": self.stats.temporary_bytes,
+            "cache": self.stats.cache_bytes,
+            "prefetch": self.stats.prefetch_bytes,
+        }
+
+class AllocationContext:
+    def __init__(self, manager: MemoryManager, size: int, category: str):
+        self.manager = manager
+        self.size = size
+        self.category = category
+
+    def __enter__(self):
+        if not self.manager.request(self.size, self.category):
+            raise MemoryBudgetExceeded(f"Requested {self.size} bytes for {self.category}, "
+                                      f"but only {self.manager.available()} available.")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.manager.release(self.size, self.category)
 
 @dataclass
 class MemoryStats:
-    current: int = 0
-    peak: int = 0
-    weights: int = 0
-    activations: int = 0
-    cache: int = 0
-    temporary: int = 0
-
-
-class MemoryManager:
-    def __init__(self, budget_bytes):
-        self.budget_bytes = budget_bytes
-        self.stats = MemoryStats()
+    """Current tracked memory usage."""
+    weights_bytes: int = 0
+    activations_bytes: int = 0
+    temporary_bytes: int = 0
+    cache_bytes: int = 0
+    prefetch_bytes: int = 0
 
     @property
-    def available(self):
-        return self.budget_bytes - self.stats.current
-
-    def used(self):
-        return self.stats.current
-
-    def available_bytes(self):
-        return self.available
-
-    def peak(self):
-        return self.stats.peak
-
-    def reserve(self, nbytes, category="temporary"):
-        if nbytes < 0 or nbytes > self.available:
-            raise MemoryBudgetExceeded(
-                nbytes, max(0, self.available), self.budget_bytes, category
-            )
-        self.stats.current += nbytes
-        self.stats.peak = max(self.stats.peak, self.stats.current)
-        if hasattr(self.stats, category):
-            setattr(self.stats, category, getattr(self.stats, category) + nbytes)
-        return Reservation(self, nbytes, category)
-
-    def release(self, nbytes, category="temporary"):
-        self.stats.current -= nbytes
-        if self.stats.current < 0:
-            raise RuntimeError("memory accounting underflow")
-        if hasattr(self.stats, category):
-            setattr(
-                self.stats, category, max(0, getattr(self.stats, category) - nbytes)
-            )
-
-    @contextmanager
-    def allocation(self, nbytes, category="temporary"):
-        r = self.reserve(nbytes, category)
-        try:
-            yield r
-        finally:
-            r.release()
-
-    def report(self):
-        return self.stats
-
-
-class Reservation:
-    def __init__(self, manager, nbytes, category):
-        self.manager = manager
-        self.nbytes = nbytes
-        self.category = category
-        self.active = True
-
-    def release(self):
-        if self.active:
-            self.manager.release(self.nbytes, self.category)
-            self.active = False
+    def total(self) -> int:
+        return (self.weights_bytes + self.activations_bytes +
+                self.temporary_bytes + self.cache_bytes + self.prefetch_bytes)
